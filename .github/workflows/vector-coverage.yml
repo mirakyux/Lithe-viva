@@ -8,6 +8,9 @@ on:
       - '.github/workflows/vector-coverage.yml'
   pull_request:
     paths:
+      - 'gfx/**'
+      - 'internal/render/**'
+      - 'internal/scene/**'
       - 'internal/platform/**'
       - 'headless/**'
       - 'app/painter.go'
@@ -25,15 +28,21 @@ concurrency:
 
 jobs:
   # The same pixel contract on D3D11, Vulkan and Metal, so all three stay in the
-  # matrix. The contract runs once per platform, on the shaders the repository
-  # ships; rebuilding them then proves the checked-in binaries are what the
-  # sources compile to, and the contract runs a second time only when they are
-  # not, so a changed shader source is still rendered before it is trusted.
+  # matrix. Test the shipped shaders first, then test the compiler output if it
+  # differs. Keep the rebuilt binaries available even when shipped coverage fails.
   native:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        include:
+          - os: windows-latest
+            shader-artifact: |
+              internal/platform/windows/shaders/*.dxbc
+              internal/platform/windows/shaders/manifest.json
+          - os: macos-latest
+            shader-artifact: internal/platform/darwin/shaders/scene.metallib
+          - os: ubuntu-latest
+            shader-artifact: internal/platform/vulkan/shaders/*.spv
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +54,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y glslc mesa-vulkan-drivers libvulkan1 libfontconfig1 libfreetype6 libharfbuzz0b
       - name: Native coverage with shipped shaders
+        id: shipped
+        continue-on-error: true
         run: go test -tags vivahead ./headless -run '^TestVector' -v -count=1
       - name: Compile D3D11 shaders
         if: runner.os == 'Windows'
@@ -70,18 +81,18 @@ jobs:
             echo changed=true >> "$GITHUB_OUTPUT"
           fi
       - name: Native pixel coverage with the rebuilt shaders
-        if: steps.shaders.outputs.changed == 'true'
+        if: steps.shipped.outcome == 'failure' || steps.shaders.outputs.changed == 'true'
         run: go test -tags vivahead ./headless -run '^TestVector' -v -count=1
       - name: Native static checks
         run: go vet -tags vivahead ./headless/... ./app/... ./internal/platform/...
       # Generated native binaries are checked in so applications need no shader
       # compiler. Keep compiler output available for updating them from any host.
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ !cancelled() && steps.shaders.outcome == 'success' }}
         with:
           name: vector-shaders-${{ runner.os }}
-          path: |
-            internal/platform/darwin/shaders/scene.metallib
-            internal/platform/vulkan/shaders/*.spv
-            internal/platform/windows/shaders/*.dxbc
-            internal/platform/windows/shaders/manifest.json
+          path: ${{ matrix.shader-artifact }}
+          if-no-files-found: error
+      - name: Require shipped shader coverage
+        if: ${{ !cancelled() && steps.shipped.outcome == 'failure' }}
+        run: exit 1

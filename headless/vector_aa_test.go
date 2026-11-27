@@ -104,3 +104,60 @@ func TestVectorCoverageAtDeviceScales(t *testing.T) {
 		})
 	}
 }
+
+// A stroke's internal diagonal must not change the coverage of either long edge,
+// even near the ends where the triangle owning a pixel carries the opposite edge.
+func TestVectorStrokeQuadCoverageIsUniform(t *testing.T) {
+	if !rendererAvailable {
+		t.Skip("native screenshots need the platform headless renderer")
+	}
+	r := newRenderer()
+	defer r.close()
+	for _, scale := range []float64{1, 1.25, 1.5, 2} {
+		for _, width := range []float64{1, 1.25, 2, 3} {
+			for _, reverse := range []bool{false, true} {
+				for _, cap := range []gfx.StrokeCap{gfx.CapButt, gfx.CapRound} {
+					t.Run(fmt.Sprintf("%gx/%gpx/reverse=%t/cap=%d", scale, width, reverse, cap), func(t *testing.T) {
+						const center = 12.25
+						from, to := float32(4/scale), float32(28/scale)
+						if reverse {
+							from, to = to, from
+						}
+						var canvas gfx.Canvas
+						canvas.SetPixelScale(float32(scale))
+						driver, err := app.NewDriver(app.Config{
+							Title: "stroke coverage", Width: 32, Height: 32, ClearColor: app.Color{Alpha: 1},
+							Paint: func(canvas *gfx.Canvas, size gfx.Size) {
+								path := canvas.PathBuilder()
+								path.MoveTo(float32(center/scale), from)
+								path.LineTo(float32(center/scale), to)
+								canvas.DrawPath(path.Path(size.Width, size.Height), gfx.Rect{Width: size.Width, Height: size.Height}, gfx.PathStyle{
+									Stroke: gfx.Color{Red: 1, Green: 1, Blue: 1, Alpha: 1}, StrokeWidth: float32(width / scale), Cap: cap,
+								})
+							},
+						}, &canvas)
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer driver.Close()
+						pixels, err := r.render(driver.Snapshot(), scale)
+						if err != nil {
+							t.Fatal(err)
+						}
+						for x := 9; x <= 15; x++ {
+							// Coverage is the width of the intersection of this pixel and the stroke.
+							coverage := min(float64(x+1), center+width/2) - max(float64(x), center-width/2)
+							want := math.Round(255 * max(0, coverage))
+							// Both cap styles end at least two device pixels outside this band.
+							for y := 6; y < 26; y++ {
+								if got := pixels.RGBAAt(x, y).R; math.Abs(float64(got)-want) > 2 {
+									t.Fatalf("stroke coverage at (%d,%d) = %d, want %g", x, y, got, want)
+								}
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}

@@ -35,53 +35,6 @@ func TestVectorBoundaryCoversTheOutsideHalfPixel(t *testing.T) {
 	}
 }
 
-// A stroke's internal diagonal must not change the coverage of either long edge,
-// even near the ends where the triangle owning a pixel carries the opposite edge.
-func TestStrokeQuadCoverageIsUniform(t *testing.T) {
-	for _, scale := range []float64{1, 1.25, 1.5, 2} {
-		for _, width := range []float64{1, 1.25, 2, 3} {
-			for _, reverse := range []bool{false, true} {
-				for _, cap := range []gfx.StrokeCap{gfx.CapButt, gfx.CapRound} {
-					t.Run(fmt.Sprintf("%gx/%gpx/reverse=%t/cap=%d", scale, width, reverse, cap), func(t *testing.T) {
-						const center = 12.25
-						from, to := float32(4/scale), float32(28/scale)
-						if reverse {
-							from, to = to, from
-						}
-						var canvas gfx.Canvas
-						canvas.SetPixelScale(float32(scale))
-						b := canvas.PathBuilder()
-						b.MoveTo(float32(center/scale), from)
-						b.LineTo(float32(center/scale), to)
-						canvas.DrawPath(b.Path(32, 32), gfx.Rect{Width: 32, Height: 32}, gfx.PathStyle{
-							Stroke: gfx.Color{Red: 1, Green: 1, Blue: 1, Alpha: 1}, StrokeWidth: float32(width / scale), Cap: cap,
-						})
-						rectangles := make([]render.Rectangle, 0, len(canvas.Triangles()))
-						for _, triangle := range canvas.Triangles() {
-							r := render.Rectangle{Kind: scene.KindTriangle, Color: scene.Color(triangle.Color), EdgeMask: triangle.EdgeMask}
-							for i, p := range triangle.Points {
-								r.Points[i] = scene.Point{X: p.X, Y: p.Y}
-							}
-							rectangles = append(rectangles, r)
-						}
-						pixels := clipScene(t, 32, scale, rectangles)
-						for x := 9; x <= 15; x++ {
-							coverage := min(1, max(0, 0.5+width/2-math.Abs(float64(x)+0.5-center)))
-							want := math.Round(255 * coverage)
-							// Both cap styles end at least two device pixels outside this band.
-							for y := 6; y < 26; y++ {
-								if got := pixels.RGBAAt(x, y).R; math.Abs(float64(got)-want) > 2 {
-									t.Fatalf("stroke coverage at (%d,%d) = %d, want %g; internal diagonal changed the fringe", x, y, got, want)
-								}
-							}
-						}
-					})
-				}
-			}
-		}
-	}
-}
-
 func vectorCoverageScene() []render.Rectangle {
 	icon := gfx.Icon{ViewBox: 24, Stroke: 2, Cap: gfx.CapRound, Join: gfx.JoinRound, Commands: []gfx.PathCommand{
 		gfx.MoveTo(20, 12), gfx.CubicTo(20, 16.42, 16.42, 20, 12, 20), gfx.CubicTo(7.58, 20, 4, 16.42, 4, 12),
