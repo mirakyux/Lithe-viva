@@ -36,6 +36,17 @@ func ValidateRectangles(rectangles []Rectangle) error {
 			if !validTriangleEdgeMask(rectangle.EdgeMask) {
 				return fmt.Errorf("render: triangle %d has invalid edge mask %d", index, rectangle.EdgeMask)
 			}
+			if source := rectangle.Coverage; source != nil {
+				if rectangle.Shade.On || rectangle.EdgeMask > 7 ||
+					source.EdgeMask&scene.StrokeQuadEdgeMask == 0 || !validTriangleEdgeMask(source.EdgeMask) {
+					return fmt.Errorf("render: triangle %d has invalid stroke coverage", index)
+				}
+				for pointIndex, point := range source.Points {
+					if !finiteFloat(point.X) || !finiteFloat(point.Y) {
+						return fmt.Errorf("render: triangle %d stroke coverage point %d is non-finite", index, pointIndex)
+					}
+				}
+			}
 		}
 	}
 	return nil

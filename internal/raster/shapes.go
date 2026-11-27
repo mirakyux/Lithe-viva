@@ -198,7 +198,6 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 	if !(finite(ax) && finite(ay) && finite(bx) && finite(by) && finite(cx) && finite(cy) && finite(area2) && finite(longest2)) || abs32(area2) < 1e-8 {
 		return
 	}
-	strokeQuad := rc.EdgeMask&scene.StrokeQuadEdgeMask != 0
 	edgeMask := uint32(rc.EdgeMask & 7)
 	bounded := edgeMask != 7 || abs32(area2) < longest2*0.125
 	ps := 1 / scale
@@ -215,17 +214,31 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 	if cross2(bx-ax, by-ay, cx-ax, cy-ay) > 0 {
 		orientation = 1
 	}
+	coveragePoints, coverageFlags := pts, rc.EdgeMask
+	coverageOrientation := orientation
+	if source := rc.Coverage; source != nil {
+		coveragePoints, coverageFlags = source.Points, source.EdgeMask
+		a, b, c := coveragePoints[0], coveragePoints[1], coveragePoints[2]
+		if cross2(b.X-a.X, b.Y-a.Y, c.X-a.X, c.Y-a.Y) > 0 {
+			coverageOrientation = 1
+		} else {
+			coverageOrientation = -1
+		}
+	}
+	strokeQuad := coverageFlags&scene.StrokeQuadEdgeMask != 0
+	coverageEdges := coverageFlags & 7
+	fa, fb, fc := coveragePoints[0], coveragePoints[1], coveragePoints[2]
 	var strokeWidth, oppositeX, oppositeY, oppositeEndX, oppositeEndY float32
-	firstHalf := edgeMask&1 != 0
+	firstHalf := coverageEdges&1 != 0
 	if strokeQuad {
 		if firstHalf {
-			strokeWidth = orientation * edgeDistance(cx, cy, ax, ay, bx, by)
-			oppositeX, oppositeY = cx, cy
-			oppositeEndX, oppositeEndY = cx+abx, cy+aby
+			strokeWidth = coverageOrientation * edgeDistance(fc.X, fc.Y, fa.X, fa.Y, fb.X, fb.Y)
+			oppositeX, oppositeY = fc.X, fc.Y
+			oppositeEndX, oppositeEndY = fc.X+(fb.X-fa.X), fc.Y+(fb.Y-fa.Y)
 		} else {
-			strokeWidth = orientation * edgeDistance(bx, by, cx, cy, ax, ay)
-			oppositeX, oppositeY = bx, by
-			oppositeEndX, oppositeEndY = bx-acx, by-acy
+			strokeWidth = coverageOrientation * edgeDistance(fb.X, fb.Y, fc.X, fc.Y, fa.X, fa.Y)
+			oppositeX, oppositeY = fb.X, fb.Y
+			oppositeEndX, oppositeEndY = fb.X+(fa.X-fc.X), fb.Y+(fa.Y-fc.Y)
 		}
 	}
 	px := [3][2]float32{{ax, ay}, {bx, by}, {cx, cy}}
@@ -263,14 +276,14 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 			}
 			const far = 1e6
 			d0, d1, d2 := float32(far), float32(far), float32(far)
-			if edgeMask&1 != 0 {
-				d0 = orientation * edgeDistance(ppx, py, ax, ay, bx, by)
+			if coverageEdges&1 != 0 {
+				d0 = coverageOrientation * edgeDistance(ppx, py, fa.X, fa.Y, fb.X, fb.Y)
 			}
-			if edgeMask&2 != 0 {
-				d1 = orientation * edgeDistance(ppx, py, bx, by, cx, cy)
+			if coverageEdges&2 != 0 {
+				d1 = coverageOrientation * edgeDistance(ppx, py, fb.X, fb.Y, fc.X, fc.Y)
 			}
-			if edgeMask&4 != 0 {
-				d2 = orientation * edgeDistance(ppx, py, cx, cy, ax, ay)
+			if coverageEdges&4 != 0 {
+				d2 = coverageOrientation * edgeDistance(ppx, py, fc.X, fc.Y, fa.X, fa.Y)
 			}
 			inside := min(d0, min(d1, d2))
 			if strokeQuad {
@@ -283,7 +296,9 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 				inside = min(inside, strokeWidth-longEdge)
 			}
 			if inside < 0 {
-				// An acute offset line must not paint past the actual ends.
+				// The clipped mesh still supplies the visible line segments
+				// for outward feathering. The source's longer segments could
+				// extend a fringe past the end of the cut.
 				s0, s1, s2 := float32(far), float32(far), float32(far)
 				if edgeMask&1 != 0 {
 					s0 = segmentDistance(ppx, py, ax, ay, bx, by)
@@ -295,13 +310,13 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 					s2 = segmentDistance(ppx, py, cx, cy, ax, ay)
 				}
 				outside := min(s0, min(s1, s2))
-				if strokeQuad {
+				if strokeQuad && rc.Coverage == nil {
 					outside = min(outside, segmentDistance(ppx, py, oppositeX, oppositeY, oppositeEndX, oppositeEndY))
 				}
 				inside = -outside
 			}
 			coverage := float32(1)
-			if edgeMask != 0 {
+			if coverageEdges != 0 {
 				coverage = clamp01(0.5 + inside/ps)
 			}
 			// The color at this point of a shaded face (flat when the three are equal).
