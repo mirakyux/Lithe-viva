@@ -17,6 +17,7 @@ type Rectangle struct {
 	Points [3]scene.Point
 	Layer  uint16
 	// EdgeMask selects the triangle edges that receive boundary feathering.
+	// scene.StrokeQuadEdgeMask also enables coverage from the opposite edge.
 	EdgeMask uint8
 	// Shade, when On, gives the triangle the colors of its second and third
 	// corner; Color is the first's.

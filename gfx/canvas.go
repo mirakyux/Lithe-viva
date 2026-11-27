@@ -141,6 +141,10 @@ type Triangle struct {
 	// boundary. Bit 0 is Points[0]→Points[1], bit 1 is Points[1]→Points[2],
 	// and bit 2 is Points[2]→Points[0]. Renderers feather only these edges;
 	// shared tessellation edges stay fully covered.
+	// Bit 3 marks one half of a stroke quad: the long edge is 0→1 when bit 0
+	// is set, otherwise 2→0. Its opposite boundary is parallel through the
+	// remaining point. Both boundaries constrain coverage, whichever half the
+	// quad's internal diagonal assigns a pixel to.
 	EdgeMask uint8
 	ClipOf   Rect
 	HasClip  bool

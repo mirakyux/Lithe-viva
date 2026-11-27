@@ -46,6 +46,12 @@ type Point struct {
 	Y float32
 }
 
+// StrokeQuadEdgeMask marks a triangle as one half of a parallelogram stroke.
+// Its long edge is 0→1 when bit 0 is set, or 2→0 otherwise. The opposite edge
+// is parallel and passes through the remaining point. Both contribute to
+// coverage even though the diagonal gives each pixel to just one triangle.
+const StrokeQuadEdgeMask uint8 = 1 << 3
+
 // Shade makes a triangle vary from its Color at Points[0] to Colors[0] at
 // Points[1] and Colors[1] at Points[2], linearly across its face. The zero Shade
 // leaves the triangle one flat color.

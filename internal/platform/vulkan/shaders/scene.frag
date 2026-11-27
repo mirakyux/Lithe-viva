@@ -22,6 +22,7 @@ layout(location = 0) out vec4 outColor;
 
 // Low bits keep edgeMask+1; this bit is local to the rasterizer.
 #define boundedTriangleFlag (1u << 8)
+#define strokeQuadEdgeMask (1u << 3)
 
 float edgeDistance(vec2 point, vec2 from, vec2 to) {
     vec2 edge = to - from;
@@ -129,12 +130,25 @@ void main() {
         float distance1 = (edgeMask & 2u) != 0u ? orientation * edgeDistance(p, inTriangleB, inTriangleC) : 1e6;
         float distance2 = (edgeMask & 4u) != 0u ? orientation * edgeDistance(p, inTriangleC, inTriangleA) : 1e6;
         float inside = min(distance0, min(distance1, distance2));
+        bool strokeQuad = (edgeMask & strokeQuadEdgeMask) != 0u;
+        vec2 oppositeStart, oppositeEnd;
+        if (strokeQuad) {
+            // The shared diagonal decides ownership, but coverage depends on both long edges.
+            bool firstHalf = (edgeMask & 1u) != 0u;
+            vec2 from = firstHalf ? inTriangleA : inTriangleC;
+            vec2 to = firstHalf ? inTriangleB : inTriangleA;
+            oppositeStart = firstHalf ? inTriangleC : inTriangleB;
+            oppositeEnd = oppositeStart + (to - from);
+            float primary = firstHalf ? distance0 : distance2;
+            inside = min(inside, orientation * edgeDistance(oppositeStart, from, to) - primary);
+        }
         if (inside < 0.0) {
             // Acute offset-line miters must not paint beyond the actual ends.
             float s0 = (edgeMask & 1u) != 0u ? segmentDistance(p, inTriangleA, inTriangleB) : 1e6;
             float s1 = (edgeMask & 2u) != 0u ? segmentDistance(p, inTriangleB, inTriangleC) : 1e6;
             float s2 = (edgeMask & 4u) != 0u ? segmentDistance(p, inTriangleC, inTriangleA) : 1e6;
-            inside = -min(s0, min(s1, s2));
+            float opposite = strokeQuad ? segmentDistance(p, oppositeStart, oppositeEnd) : 1e6;
+            inside = -min(min(s0, s1), min(s2, opposite));
         }
         float coverage = edgeMask == 0u ? 1.0 : clamp(0.5 + inside / pixel, 0.0, 1.0);
         vec4 shade = clamp(inColor, 0.0, 1.0);

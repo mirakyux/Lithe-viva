@@ -26,6 +26,7 @@ struct VertexOutput {
 
 // Low bits retain edgeMask+1; this bit is local to the rasterizer varyings.
 constant uint boundedTriangleFlag = 1u << 8;
+constant uint strokeQuadEdgeMask = 1u << 3;
 
 static float cross2(float2 a, float2 b) { return a.x*b.y - a.y*b.x; }
 static float segmentDistance(float2 p, float2 a, float2 b) {
@@ -248,12 +249,25 @@ fragment float4 viva_rectangle_fragment(VertexOutput input [[stage_in]]) {
         float d1 = (edgeMask & 2u) != 0u ? sign * edgeDistance(p, input.triB, input.triC) : 1e6;
         float d2 = (edgeMask & 4u) != 0u ? sign * edgeDistance(p, input.triC, input.triA) : 1e6;
         float inside = min(d0, min(d1, d2));
+        bool strokeQuad = (edgeMask & strokeQuadEdgeMask) != 0u;
+        float2 oppositeStart, oppositeEnd;
+        if (strokeQuad) {
+            // The shared diagonal decides ownership, but coverage depends on both long edges.
+            bool firstHalf = (edgeMask & 1u) != 0u;
+            float2 from = firstHalf ? input.triA : input.triC;
+            float2 to = firstHalf ? input.triB : input.triA;
+            oppositeStart = firstHalf ? input.triC : input.triB;
+            oppositeEnd = oppositeStart + (to - from);
+            float primary = firstHalf ? d0 : d2;
+            inside = min(inside, sign * edgeDistance(oppositeStart, from, to) - primary);
+        }
         if (inside < 0.0) {
             // Acute offset-line miters must not paint beyond the actual ends.
             float s0 = (edgeMask & 1u) != 0u ? segmentDistance(p, input.triA, input.triB) : 1e6;
             float s1 = (edgeMask & 2u) != 0u ? segmentDistance(p, input.triB, input.triC) : 1e6;
             float s2 = (edgeMask & 4u) != 0u ? segmentDistance(p, input.triC, input.triA) : 1e6;
-            inside = -min(s0, min(s1, s2));
+            float opposite = strokeQuad ? segmentDistance(p, oppositeStart, oppositeEnd) : 1e6;
+            inside = -min(min(s0, s1), min(s2, opposite));
         }
         float coverage = edgeMask == 0 ? 1.0 : saturate(0.5 + inside / pixel);
         float4 shade = saturate(input.color);

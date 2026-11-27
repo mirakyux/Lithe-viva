@@ -11,6 +11,7 @@ SamplerState labelSampler : register(s0);
 struct Vertex { float4 position : SV_Position; float4 color : COLOR; float2 local : LOCAL; float2 size : SIZE; float radius : RADIUS; float2 uv : TEXCOORD; float2 frag : FRAG; float2 triA : TRIA; float2 triB : TRIB; float2 triC : TRIC; nointerpolation uint triangleMask : TRIMASK; };
 // Low bits keep edgeMask+1; this bit is local to the rasterizer.
 #define boundedTriangleFlag (1u << 8)
+#define strokeQuadFlag (1u << 3)
 float2 corner(uint vertex) {
     const float2 corners[6] = {float2(0,0),float2(1,0),float2(0,1),float2(0,1),float2(1,0),float2(1,1)};
     return corners[vertex];
@@ -169,7 +170,8 @@ float4 rectangleFragment(Vertex input) : SV_Target {
         float area2 = (input.triB.x-input.triA.x)*(input.triC.y-input.triA.y) -
             (input.triB.y-input.triA.y)*(input.triC.x-input.triA.x);
         float sign = area2 > 0 ? 1 : -1;
-        uint edgeMask = (input.triangleMask & ~boundedTriangleFlag) - 1;
+        uint edgeFlags = (input.triangleMask & ~boundedTriangleFlag) - 1;
+        uint edgeMask = edgeFlags & 7u;
         // The actual sample, not the interpolated face: over a sliver's long
         // support the interpolant cannot say which pixel it is.
         float2 p = input.position.xy * pixelSize;
@@ -215,12 +217,26 @@ float4 rectangleFragment(Vertex input) : SV_Target {
         float d1 = (edgeMask & 2u) != 0 ? sign * edgeDistance(p, input.triB, input.triC) : 1e6;
         float d2 = (edgeMask & 4u) != 0 ? sign * edgeDistance(p, input.triC, input.triA) : 1e6;
         float inside = min(d0, min(d1, d2));
+        float2 oppositeStart = 0, oppositeEnd = 0;
+        bool strokeQuad = (edgeFlags & strokeQuadFlag) != 0;
+        if (strokeQuad) {
+            // The diagonal assigns this sample to one triangle, but coverage is
+            // measured against both long edges of the original stroke quad.
+            bool firstHalf = (edgeMask & 1u) != 0;
+            float2 start = firstHalf ? input.triA : input.triC;
+            float2 end = firstHalf ? input.triB : input.triA;
+            oppositeStart = firstHalf ? input.triC : input.triB;
+            oppositeEnd = oppositeStart + (end - start);
+            float opposite = -sign * edgeDistance(p, oppositeStart, oppositeEnd);
+            inside = min(inside, opposite);
+        }
         if (inside < 0) {
             // Acute offset-line miters must not paint beyond the actual ends.
             float s0 = (edgeMask & 1u) != 0 ? segmentDistance(p, input.triA, input.triB) : 1e6;
             float s1 = (edgeMask & 2u) != 0 ? segmentDistance(p, input.triB, input.triC) : 1e6;
             float s2 = (edgeMask & 4u) != 0 ? segmentDistance(p, input.triC, input.triA) : 1e6;
-            inside = -min(s0, min(s1, s2));
+            float opposite = strokeQuad ? segmentDistance(p, oppositeStart, oppositeEnd) : 1e6;
+            inside = -min(opposite, min(s0, min(s1, s2)));
         }
         float coverage = edgeMask == 0 ? 1 : saturate(0.5 + inside / pixel);
         float4 shade = saturate(input.color);

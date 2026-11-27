@@ -198,7 +198,8 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 	if !(finite(ax) && finite(ay) && finite(bx) && finite(by) && finite(cx) && finite(cy) && finite(area2) && finite(longest2)) || abs32(area2) < 1e-8 {
 		return
 	}
-	edgeMask := uint32(rc.EdgeMask)
+	strokeQuad := rc.EdgeMask&scene.StrokeQuadEdgeMask != 0
+	edgeMask := uint32(rc.EdgeMask & 7)
 	bounded := edgeMask != 7 || abs32(area2) < longest2*0.125
 	ps := 1 / scale
 	lowX := min(ax, min(bx, cx)) - 0.5*ps
@@ -213,6 +214,19 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 	orientation := float32(-1)
 	if cross2(bx-ax, by-ay, cx-ax, cy-ay) > 0 {
 		orientation = 1
+	}
+	var strokeWidth, oppositeX, oppositeY, oppositeEndX, oppositeEndY float32
+	firstHalf := edgeMask&1 != 0
+	if strokeQuad {
+		if firstHalf {
+			strokeWidth = orientation * edgeDistance(cx, cy, ax, ay, bx, by)
+			oppositeX, oppositeY = cx, cy
+			oppositeEndX, oppositeEndY = cx+abx, cy+aby
+		} else {
+			strokeWidth = orientation * edgeDistance(bx, by, cx, cy, ax, ay)
+			oppositeX, oppositeY = bx, by
+			oppositeEndX, oppositeEndY = bx-acx, by-acy
+		}
 	}
 	px := [3][2]float32{{ax, ay}, {bx, by}, {cx, cy}}
 	for y := box.Top; y < box.Bottom; y++ {
@@ -259,6 +273,15 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 				d2 = orientation * edgeDistance(ppx, py, cx, cy, ax, ay)
 			}
 			inside := min(d0, min(d1, d2))
+			if strokeQuad {
+				// The internal diagonal determines ownership only. The opposite
+				// side can be closer to a pixel center even in this half.
+				longEdge := d2
+				if firstHalf {
+					longEdge = d0
+				}
+				inside = min(inside, strokeWidth-longEdge)
+			}
 			if inside < 0 {
 				// An acute offset line must not paint past the actual ends.
 				s0, s1, s2 := float32(far), float32(far), float32(far)
@@ -271,7 +294,11 @@ func drawTriangle(c *Canvas, area render.Scissor, rc *render.Rectangle, scale fl
 				if edgeMask&4 != 0 {
 					s2 = segmentDistance(ppx, py, cx, cy, ax, ay)
 				}
-				inside = -min(s0, min(s1, s2))
+				outside := min(s0, min(s1, s2))
+				if strokeQuad {
+					outside = min(outside, segmentDistance(ppx, py, oppositeX, oppositeY, oppositeEndX, oppositeEndY))
+				}
+				inside = -outside
 			}
 			coverage := float32(1)
 			if edgeMask != 0 {
